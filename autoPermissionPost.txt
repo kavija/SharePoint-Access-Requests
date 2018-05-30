@@ -1,0 +1,529 @@
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.2/jquery.min.js"></script>
+<script>
+var approverGroupID;
+var requestURL;
+var requestedBy;
+var requestorEmail;
+var requestorDisplayName;
+var requestedResourceTitle;
+var requestedRootWebTitle;
+var requestedWebTitle;
+var requestedResource;
+var isWeb;
+var isList;
+var selectedRequest;
+var requestPermisisonBody = "Hello,\n\nPlease provide your approval to grant access to <Person> on the '<SiteName>' <ResourceType>.\n\n<SiteURL>\n\nPlease specify the level of access to be granted.\n\nThanks!\nSharePoint Support";
+var grantedPermisisonBody = "Hello,\n\nYou are granted access on the site <SiteURL>.\n\nPlease verify and let us know in case of any issues.\n\nThanks!\nSharePoint Support";
+
+function getParameterByName(name, url) {
+    name = name.replace(/[\[\]]/g, "\\$&");
+    var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+        results = regex.exec(url);
+    if (!results) return null;
+    if (!results[2]) return '';
+    return decodeURIComponent(results[2].replace(/\+/g, " "));
+}
+
+function setApproverGroup(control, groupId) {
+  if(control.checked) {
+        approverGroupID = groupId;
+  }
+  else {
+        approverGroupID = 0;
+  }
+}
+
+function selectExistingRequest(control, id, requestURL) {
+  if(control.checked) {
+        $('.existingReqs').attr('checked', false);
+        control.checked = true;
+        selectedRequest = id;
+        $("#txtRequestURL").val(decodeURIComponent(requestURL));
+        $("#btnRequstDetails").click();
+  }
+  else {
+        selectedRequest = 0;
+  }
+}
+
+function loadRequestInfo(control, requestURL) {
+  $("#txtRequestURL").val(decodeURIComponent(unescape(requestURL)));
+  $("#btnRequstDetails").click();
+}
+
+function getLast10Requests(webURL) {
+    var url = webURL + "_api/web/lists/getbytitle('Access Requests')/items?$select=RequestId,RequestedBy,ObjectRequestedTitleDisp,PermissionLevelRequested,Conversation,RequestedObjectUrl,RequestedObjectTitle,RequestedByDisplayName&$top=10&$orderby=Created desc";
+    $.ajax({
+        url: url,
+        method: "GET",
+        headers: { "Accept": "application/json; odata=verbose" },
+        success: function (data) {
+            $("#requestInfo tr").remove();
+            $("#groupInfo tr").remove();
+            $("#requestInfo").append('<tr><td>Requestor</td><td>Requested Resource</td><td>Action</td></tr>');
+
+            results = data.d.results;
+            for (var i = 0; i < results.length; i++) { 
+            var requestInfoURL = encodeURIComponent(escape(webURL + "Access Requests/pendingreq.aspx?ApproveAccessRequest=true&AccessRequestID={" + results[i].RequestId + "}"));
+            $("#requestInfo").append("<tr><td>" + results[i].RequestedByDisplayName  + "</td><td><a href=" + encodeURI(results[i].RequestedObjectUrl.Url)  +" target=_blank>" + results[i].RequestedObjectTitle + "</a></td><td><input type='button' onclick=loadRequestInfo(this,'" + requestInfoURL + "'); value='Load Details'/></tr>");
+            }
+        },
+        error: function (data) {
+            console.log(data);
+        }
+    });
+}
+
+function RemoveRequest() {
+  if(selectedRequest !== 0) {
+        deleteListItem(selectedRequest);
+  }
+}
+
+function RaiseSR() {
+  emailBody = `Please create a service request to grant permission for ${requestorDisplayName}\n\nSource: Email\nOwner Group: C-ACN-AMS-SHAREPOINT\nReported By: SharePointSupport@company.com\nSummary: ${requestorDisplayName} wants to access ${requestedResource}\nImpact: 3\nUrgency: 3\nAffected Person: ${requestorEmail}@company.Com\nClassification:MVA2000038\nClassification Path:21030000 \ MVA2000038\nClass Description:Application \ Sharepoint`;
+
+  document.location.href = "mailto:companynewsr@smi.company.com?cc=SharePointSupport@company.Com&subject=QUEUE=C-ACN-AMS-SHAREPOINT;" + encodeURIComponent(requestorDisplayName + " wants to access '" + requestedResource + "'") + "&body=" + encodeURIComponent(emailBody);
+}
+
+function getListItemWithId(selectedRequest, success, failure) {
+    var url = _spPageContextInfo.siteAbsoluteUrl + "/_api/web/lists/getbytitle('Permissions')/items?$filter=Id eq " + selectedRequest;
+    $.ajax({
+        url: url,
+        method: "GET",
+        headers: { "Accept": "application/json; odata=verbose" },
+        success: function (data) {
+            if (data.d.results.length == 1) {
+                success(data.d.results[0]);
+            }
+            else {
+                failure("Multiple results obtained for the specified Id value");
+            }
+        },
+        error: function (data) {
+            failure(data);
+        }
+    });
+}
+
+function deleteListItem(selectedRequest) {
+    var url = _spPageContextInfo.siteAbsoluteUrl + "/_api/web/lists/getbytitle('Permissions')/items(" + selectedRequest + ")";
+    $.ajax({
+        url: url,
+        type: "POST",
+        headers: {
+            "Accept": "application/json;odata=verbose",
+            "X-Http-Method": "DELETE",            
+            "X-RequestDigest": $("#__REQUESTDIGEST").val(),
+            "If-Match": "*"
+        },
+        success: function (data) {
+            $('#Request_' + selectedRequest).remove();
+        },
+        error: function (data) {
+            console.log(data);
+        }
+    });
+}
+
+function displayListItems() {
+    var url = _spPageContextInfo.siteAbsoluteUrl + "/_api/web/lists/getbytitle('Permissions')/items?$select=ID,Title,SiteName,URL";
+    $.ajax({
+        url: url,
+        method: "GET",
+        headers: { "Accept": "application/json; odata=verbose" },
+        success: function (data) {
+            var results = data.d.results;
+            var regDivStart = new RegExp("<div class=\"ExternalClass[0-9A-F]+\">", "");
+            var regDivEnd = new RegExp("</div>$", "");
+
+            $("#existingRequests").find("tr:gt(0)").remove();
+            for (var i = 0; i < results.length; i++) {  
+               var resultURL = encodeURIComponent($("<div/>").html(results[i].URL.replace(regDivStart, "").replace(regDivEnd, "")).text());
+               $("#existingRequests").append("<tr id='Request_" + results[i].ID + "'><td><input type='checkbox' id='SelectedReq_" + results[i].ID  + "' class ='existingReqs' onclick=selectExistingRequest(this," + results[i].ID  + ",'" + resultURL + "');>" + results[i].ID + "</td><td>" + results[i].Title + "</td><td>" + results[i].SiteName + "</td></tr>");
+            }
+        },
+        error: function (data) {
+            console.log(data);
+        }
+    });
+}
+
+function CreateListItemWithDetails() {
+    var itemType = GetItemTypeForListName("Permissions");
+    var item = {
+        "__metadata": { "type": itemType },
+        "Title": requestorDisplayName,
+        "SiteName": requestedResourceTitle,
+        "URL": requestURL
+    };
+
+	var requestDigestUri = _spPageContextInfo.siteAbsoluteUrl + "/_api/contextinfo";
+	var obtainedDigest = true;
+	var requestDigestToken = "";
+
+	$.ajax({
+		url: requestDigestUri,
+		method: "POST",
+		async: false,
+		headers: { "Accept": "application/json; odata=verbose"},
+		success: function (data) {
+		   requestDigestToken = data.d.GetContextWebInformation.FormDigestValue;
+		},
+		error: function (data, errorCode, errorMessage) {
+		   obtainedDigest = false;
+		}
+	});
+
+	if(!obtainedDigest) {
+		alert("Unable to get the Request Digest Token");
+		return;
+	}
+
+    $.ajax({
+        url: _spPageContextInfo.siteAbsoluteUrl + "/_api/web/lists/getbytitle('Permissions')/items",
+        type: "POST",
+        contentType: "application/json;odata=verbose",
+        data: JSON.stringify(item),
+        headers: {
+            "Accept": "application/json;odata=verbose",
+            "X-RequestDigest": requestDigestToken
+        },
+        success: function (data) {
+            $("#existingRequests").append("<tr id='" + data.d.ID + "'><td><input type='checkbox' onclick=selectExistingRequest(this," + data.d.ID  + ",'" + encodeURIComponent(requestURL) + "');>" + data.d.ID + "</td><td>" + requestorDisplayName + "</td><td>" + requestedResourceTitle + "</td></tr>");
+        },
+        error: function (data) {
+            console.log(data);
+        }
+    });
+}
+
+function GetItemTypeForListName(name) {
+    return "SP.Data." + name.charAt(0).toUpperCase() + name.split(" ").join("").slice(1) + "ListItem";
+}
+
+$(function(){
+    $("#btnRequstDetails").click(function(){
+        requestURL = decodeURIComponent($("#txtRequestURL").val())
+        if(requestURL.includes("safelinks.protection")) {
+            requestURL = requestURL.split("url=")[1];
+        }
+        requestURL = decodeURI(requestURL);
+
+        var webURL = requestURL.substring(0, requestURL.indexOf('Access Requests/'));
+        var requestId = getParameterByName('AccessRequestID', requestURL);
+        if(requestId === null) {
+            getLast10Requests(webURL);
+            return;
+        }
+
+        requestId = requestId.replace("{", "'").replace("}", "'");
+
+        var rootWebURL = new RegExp(".*sites\/.+?(?=\/)").exec(webURL)[0];
+        var rootWebTitleUri = rootWebURL + "/_api/web/title";
+
+        $.ajax({
+            url: rootWebTitleUri,
+            type: "GET",
+            async: false,
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":$("#__REQUESTDIGEST").val()
+            },
+            success: onRootWebTitleSuccess,
+            error: onError
+        });
+        function onRootWebTitleSuccess(data) {
+            requestedRootWebTitle = data.d.Title;
+        }
+
+        var requestUri = webURL + "_api/web/lists/getbytitle('Access Requests')/items?$filter=RequestId eq " + requestId + "&$select=RequestId,RequestedBy,ObjectRequestedTitleDisp,PermissionLevelRequested,Conversation,RequestedObjectUrl,RequestedObjectTitle,RequestedByDisplayName";
+
+        $.ajax({
+            url: requestUri,
+            type: "GET",
+            async: false,
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":$("#__REQUESTDIGEST").val()
+            },
+            success: onSuccess,
+            error: onError
+        });
+        function onSuccess(data) {
+            var result = data.d.results[0];
+            requestorDisplayName = result.RequestedByDisplayName;
+            requestedResource = result.RequestedObjectTitle ;
+            requestedResourceTitle = result.RequestedObjectTitle;
+            requestedBy = result.RequestedBy;
+            requestorEmail = result.RequestedBy.split('\\')[1];
+
+            if(result.RequestedObjectUrl.Url.includes("Lists")) {
+            	isList = true;
+            }
+
+            $("#requestInfo tr").remove();
+            $("#requestInfo").append('<tr><td>Requestor</td><td>Site Name</td><td>Site Collection Name</td></tr><tr><td>' + result.RequestedByDisplayName  + '</td><td><a href=' + encodeURI(result.RequestedObjectUrl.Url)  +' target=_blank>' + requestedResourceTitle + '</a></td><td><a href=' + rootWebURL  +' target=_blank>' + requestedRootWebTitle + '</a></td></tr>');
+
+            $("#groupInfo tr").remove();
+            $("#groupInfo").append('<tr><td>Group Name</td><td>Permissions</td></tr>');
+
+            $("#btnRequestApproval").show();
+            $("#btnRaiseSR").show();
+            $("#btnGrantPermission").show();
+            $("#btnQueueRequest").show();
+        }
+        function onError(error) {
+            alert(JSON.stringify(error));
+        }
+
+
+        var webTitleUri = webURL + "_api/web/title";
+
+        $.ajax({
+            url: webTitleUri,
+            type: "GET",
+            async: false,
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":$("#__REQUESTDIGEST").val()
+            },
+            success: onWebTitleSuccess,
+            error: onError
+        });
+        function onWebTitleSuccess(data) {
+            requestedWebTitle = data.d.Title;
+
+            if(requestedWebTitle.toUpperCase() === requestedResource.toUpperCase())
+            {
+		isWeb = true;
+            }
+        }
+
+        var groupsUri = webURL + "_api/web/roleAssignments/groups?$select=Title,Id";
+        $.ajax({
+            url: groupsUri,
+            type: "GET",
+            async: false,
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":$("#__REQUESTDIGEST").val()
+            },
+            success: onGroupSuccess,
+            error: onError
+        });
+        function onGroupSuccess(data) {
+            var results = data.d.results;
+
+            for (var i = 0; i < results.length; i++) {           
+                groupID = results[i].Id;    
+                groupName = results[i].Title;   
+
+                var permissionUri = webURL + "_api/web/RoleAssignments/GetByPrincipalId(" + groupID + ")/RoleDefinitionBindings?$select=Name,Description";
+
+                $.ajax({
+                   url: permissionUri,
+                   type: "GET",
+                   async: false,
+                   headers: {
+                      "accept":"application/json;odata=verbose",
+                      "content-type": "application/json;odata=verbose",
+                      "X-RequestDigest":$("#__REQUESTDIGEST").val()
+                   },
+                   success: onPermissionSuccess,
+                   error: onError
+                });
+
+                function onPermissionSuccess(data) {
+                    var permissions = data.d.results;
+                    var groupPermissions = "";
+
+                    for (var j = 0; j < permissions.length; j++) { 
+                       groupPermissions += permissions[j].Name + ", ";
+                    }
+                    groupPermissions = groupPermissions.slice(0, -2);
+
+                    groupLink = webURL + "_layouts/15/people.aspx?MembershipGroupId=" + groupID;
+
+                    $("#groupInfo").append("<tr><td><input type='checkbox' onclick='setApproverGroup(this," + groupID + ");'><a href=" + groupLink  + " target=_blank>" + groupName + "</a></td><td>" + groupPermissions + "</td></tr>");
+                }
+            }
+        }
+    });
+
+    $("#btnRequestApproval").click(function(){
+
+        if(typeof approverGroupID === 'undefined' || approverGroupID === 0 ) {
+		alert("Please select the Group");
+        	return;
+        }
+
+        var requestURL = decodeURIComponent($("#txtRequestURL").val())
+        if(requestURL.includes("safelinks.protection")) {
+            requestURL = requestURL.split("url=")[1];
+        }
+        requestURL = decodeURI(requestURL);
+        var webURL = requestURL.substring(0, requestURL.indexOf('Access Requests/'));
+
+        var requestUri = webURL + "_api/Web/SiteGroups/GetById(" + approverGroupID + ")/Users?$select=Email"
+
+        $.ajax({
+            url: requestUri,
+            type: "GET",
+            async: false,
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":$("#__REQUESTDIGEST").val()
+            },
+            success: onSuccess,
+            error: onError
+        });
+        function onSuccess(data) {
+            var results = data.d.results;
+            var approvers = "";
+
+            for (var i = 0; i < results.length; i++) {
+                approvers+= results[i].Email + ";";
+            }
+
+            emailBody = requestPermisisonBody.replace("<Person>", requestorDisplayName).replace("<SiteName>", requestedResource).replace("<SiteURL>", webURL);
+
+            if(isList) { 
+            	emailBody = emailBody.replace("<ResourceType>", "List");
+            }
+            else if (isWeb) {
+            	emailBody = emailBody.replace("<ResourceType>", "Site");
+            }
+            else {
+            	emailBody = emailBody.replace("<ResourceType>", "Library");
+            }
+
+
+            document.location.href = "mailto:" + approvers + "?cc=SharePointSupport@company.Com;" + requestorEmail + "@company.Com&subject=" + encodeURIComponent(requestorDisplayName + " wants to access '" + requestedResource + "'") + "&body=" + encodeURIComponent(emailBody);
+        }
+        function onError(error) {
+            alert(JSON.stringify(error));
+        }
+
+        CreateListItemWithDetails();
+    });
+
+    $("#btnGrantPermission").click(function(){
+
+        if(typeof approverGroupID === 'undefined' || approverGroupID === 0 ) {
+		alert("Please select the Group");
+        	return;
+        }
+
+        var requestURL = decodeURIComponent($("#txtRequestURL").val())
+        if(requestURL.includes("safelinks.protection")) {
+            requestURL = requestURL.split("url=")[1];
+        }
+        requestURL = decodeURI(requestURL);
+        var webURL = requestURL.substring(0, requestURL.indexOf('Access Requests/'));
+
+        var requestDigestUri = webURL + "_api/contextinfo";
+        var obtainedDigest = true;
+        var requestDigestToken = "";
+
+        $.ajax({
+            url: requestDigestUri,
+            method: "POST",
+            async: false,
+            headers: { "Accept": "application/json; odata=verbose"},
+            success: function (data) {
+               requestDigestToken = data.d.GetContextWebInformation.FormDigestValue;
+            },
+            error: function (data, errorCode, errorMessage) {
+               obtainedDigest = false;
+            }
+        });
+
+        if(!obtainedDigest) {
+            alert("Unable to get the Request Digest Token");
+            return;
+        }
+
+        var requestUri = webURL + "_api/Web/SiteGroups/GetById(" + approverGroupID + ")/Users"
+
+        $.ajax({
+            url: requestUri,
+            type: "POST",
+            data:JSON.stringify({'__metadata': { 'type': 'SP.User' }, 'LoginName': requestedBy}),
+            headers: {
+                "accept":"application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-RequestDigest":requestDigestToken
+            },
+            success: onSuccess,
+            error: onError
+        });
+        function onSuccess(data) {
+            emailBody = grantedPermisisonBody.replace("<SiteURL>", webURL);
+
+            document.location.href = "mailto:" + requestorEmail + "@company.Com?cc=SharePointSupport@company.Com&subject=" + encodeURIComponent(requestorDisplayName + " wants to access '" + requestedResource + "'") + "&body=" + encodeURIComponent(emailBody);
+
+            RemoveRequest();
+        }
+        function onError(error) {
+            alert(JSON.stringify(error));
+        }
+    });
+
+    $("#btnRefreshRequest").click(function(){
+        displayListItems();
+    });
+
+    $("#btnRemoveRequest").click(function(){
+        RemoveRequest();
+    });
+
+    $("#btnRaiseSR").click(function(){
+        RaiseSR();
+    });
+});
+</script>
+
+<table border=1 style="display: inline-block;vertical-align:top;">
+   <tr>
+      <td>
+Enter the request URL : <input type="text" name="txtRequestURL"  id="txtRequestURL" size="75" onfocus="this.value=''"><br>
+<input type="button" id="btnRequstDetails" value="Get Request Details"/><br><br>
+
+<table id="requestInfo" border="1px;">
+</table>
+
+<br><br>
+
+<table id="groupInfo">
+</table>
+
+<br><br>
+<input type="button" id="btnRequestApproval" value="Request Approval" style="display:none"/>
+<input type="button" id="btnRaiseSR" value="Raise SR" style="display:none"/>
+<input type="button" id="btnGrantPermission" value="Grant Permission" style="display:none"/>
+      </td>
+   </tr>
+</table>
+<table border=1 style="display: inline-block;vertical-align:top;">
+   <tr>
+      <td>
+<table id="existingRequests" border="1px;">
+   <tr>
+      <th>ID</th>
+      <th>Requestor</th>
+      <th>Resource</th>
+   </tr>
+</table>
+
+<br><br>
+<input type="button" id="btnRefreshRequest" value="Refresh Requests List"/>
+<input type="button" id="btnRemoveRequest" value="Remove Request from the List"/>
+      </td>
+   </tr>
+</table>
